@@ -2,7 +2,7 @@ package filters
 
 import (
 	"fmt"
-	"github.com/sjwhitworth/golearn/base"
+	"github.com/tddhit/golearn/base"
 )
 
 // FloatConvertFilters convert a given DataGrid into one which

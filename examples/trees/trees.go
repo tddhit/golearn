@@ -4,11 +4,11 @@ package main
 
 import (
 	"fmt"
-	"github.com/sjwhitworth/golearn/base"
-	"github.com/sjwhitworth/golearn/ensemble"
-	"github.com/sjwhitworth/golearn/evaluation"
-	"github.com/sjwhitworth/golearn/filters"
-	"github.com/sjwhitworth/golearn/trees"
+	"github.com/tddhit/golearn/base"
+	"github.com/tddhit/golearn/ensemble"
+	"github.com/tddhit/golearn/evaluation"
+	"github.com/tddhit/golearn/filters"
+	"github.com/tddhit/golearn/trees"
 	"math/rand"
 )
 

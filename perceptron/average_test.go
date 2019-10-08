@@ -2,8 +2,8 @@ package perceptron
 
 import (
 	"fmt"
-	"github.com/sjwhitworth/golearn/base"
-	"github.com/sjwhitworth/golearn/evaluation"
+	"github.com/tddhit/golearn/base"
+	"github.com/tddhit/golearn/evaluation"
 	"path/filepath"
 	"testing"
 )

@@ -8,10 +8,10 @@ import (
 	"fmt"
 
 	"github.com/gonum/matrix"
-	"github.com/sjwhitworth/golearn/base"
-	"github.com/sjwhitworth/golearn/kdtree"
-	"github.com/sjwhitworth/golearn/metrics/pairwise"
-	"github.com/sjwhitworth/golearn/utilities"
+	"github.com/tddhit/golearn/base"
+	"github.com/tddhit/golearn/kdtree"
+	"github.com/tddhit/golearn/metrics/pairwise"
+	"github.com/tddhit/golearn/utilities"
 	"gonum.org/v1/gonum/mat"
 )
 
@@ -96,6 +96,183 @@ func (KNN *KNNClassifier) canUseOptimisations(what base.FixedDataGrid) bool {
 	}
 	// If that's fine, return true
 	return true
+}
+
+func (KNN *KNNClassifier) PredictProba(what base.FixedDataGrid) (base.FixedDataGrid, [][]float64, []map[string]int, error) {
+	// Check what distance function we are using
+	var distanceFunc pairwise.PairwiseDistanceFunc
+	switch KNN.DistanceFunc {
+	case "euclidean":
+		distanceFunc = pairwise.NewEuclidean()
+	case "manhattan":
+		distanceFunc = pairwise.NewManhattan()
+	case "cosine":
+		distanceFunc = pairwise.NewCosine()
+	default:
+		return nil, nil, nil, errors.New("unsupported distance function")
+	}
+
+	// Check what searching algorith, we are using
+	if KNN.Algorithm != "linear" && KNN.Algorithm != "kdtree" {
+		return nil, nil, nil, errors.New("unsupported searching algorithm")
+	}
+
+	// Check Compatibility
+	allAttrs := base.CheckCompatible(what, KNN.TrainingData)
+	if allAttrs == nil {
+		// Don't have the same Attributes
+		return nil, nil, nil, errors.New("attributes not compatible")
+	}
+
+	// Use optimised version if permitted
+	//if KNN.Algorithm == "linear" && KNN.AllowOptimisations {
+	//	if KNN.DistanceFunc == "euclidean" {
+	//		if KNN.canUseOptimisations(what) {
+	//			return KNN.optimisedEuclideanPredict(what.(*base.DenseInstances)), nil, nil, nil
+	//		}
+	//	}
+	//}
+
+	// Remove the Attributes which aren't numeric
+	allNumericAttrs := make([]base.Attribute, 0)
+	for _, a := range allAttrs {
+		if fAttr, ok := a.(*base.FloatAttribute); ok {
+			allNumericAttrs = append(allNumericAttrs, fAttr)
+		}
+	}
+
+	// If every Attribute is a FloatAttribute, then we remove the last one
+	// because that is the Attribute we are trying to predict.
+	if len(allNumericAttrs) == len(allAttrs) {
+		allNumericAttrs = allNumericAttrs[:len(allNumericAttrs)-1]
+	}
+
+	// Generate return vector
+	ret := base.GeneratePredictionVector(what)
+
+	// Resolve Attribute specifications for both
+	whatAttrSpecs := base.ResolveAttributes(what, allNumericAttrs)
+	trainAttrSpecs := base.ResolveAttributes(KNN.TrainingData, allNumericAttrs)
+
+	// Reserve storage for most the most similar items
+	distances := make(map[int]float64)
+
+	// Reserve storage for voting map
+	maxmapInt := make(map[string]int)
+	maxmapFloat := make(map[string]float64)
+
+	// Reserve storage for row computations
+	trainRowBuf := make([]float64, len(allNumericAttrs))
+	predRowBuf := make([]float64, len(allNumericAttrs))
+
+	_, maxRow := what.Size()
+	curRow := 0
+
+	probas := make([][]float64, maxRow)
+	detail := make([]map[string]int, maxRow)
+	for i := range probas {
+		probas[i] = make([]float64, KNN.NearestNeighbours)
+		detail[i] = make(map[string]int)
+	}
+
+	// build kdtree if algorithm is 'kdtree'
+	kd := kdtree.New()
+	srcRowNoMap := make([]int, 0)
+	if KNN.Algorithm == "kdtree" {
+		buildData := make([][]float64, 0)
+		KNN.TrainingData.MapOverRows(trainAttrSpecs, func(trainRow [][]byte, srcRowNo int) (bool, error) {
+			oneData := make([]float64, len(allNumericAttrs))
+			// Read the float values out
+			for i, _ := range allNumericAttrs {
+				oneData[i] = base.UnpackBytesToFloat(trainRow[i])
+			}
+			srcRowNoMap = append(srcRowNoMap, srcRowNo)
+			buildData = append(buildData, oneData)
+			return true, nil
+		})
+
+		err := kd.Build(buildData)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+	}
+
+	// Iterate over all outer rows
+	what.MapOverRows(whatAttrSpecs, func(predRow [][]byte, predRowNo int) (bool, error) {
+
+		if (curRow%1) == 0 && curRow > 0 {
+			fmt.Printf("KNN: %.2f %% done\r", float64(curRow)*100.0/float64(maxRow))
+		}
+		curRow++
+
+		// Read the float values out
+		for i, _ := range allNumericAttrs {
+			predRowBuf[i] = base.UnpackBytesToFloat(predRow[i])
+		}
+
+		predMat := utilities.FloatsToMatrix(predRowBuf)
+
+		switch KNN.Algorithm {
+		case "linear":
+			// Find the closest match in the training data
+			KNN.TrainingData.MapOverRows(trainAttrSpecs, func(trainRow [][]byte, srcRowNo int) (bool, error) {
+				// Read the float values out
+				for i, _ := range allNumericAttrs {
+					trainRowBuf[i] = base.UnpackBytesToFloat(trainRow[i])
+				}
+
+				// Compute the distance
+				trainMat := utilities.FloatsToMatrix(trainRowBuf)
+				distances[srcRowNo] = distanceFunc.Distance(predMat, trainMat)
+				return true, nil
+			})
+
+			sorted := utilities.SortIntMap(distances)
+			values := sorted[:KNN.NearestNeighbours]
+
+			length := make([]float64, KNN.NearestNeighbours)
+			for k, v := range values {
+				length[k] = distances[v]
+			}
+
+			var maxClass string
+			if KNN.Weighted {
+				maxClass = KNN.weightedVote(maxmapFloat, values, length)
+			} else {
+				maxClass = KNN.vote(maxmapInt, values)
+			}
+			copy(probas[predRowNo], length)
+			for k, v := range maxmapInt {
+				detail[predRowNo][k] = v
+			}
+			base.SetClass(ret, predRowNo, maxClass)
+
+		case "kdtree":
+			// search kdtree
+			values, length, err := kd.Search(KNN.NearestNeighbours, distanceFunc, predRowBuf)
+			if err != nil {
+				return false, err
+			}
+
+			// map values to srcRowNo
+			for k, v := range values {
+				values[k] = srcRowNoMap[v]
+			}
+
+			var maxClass string
+			if KNN.Weighted {
+				maxClass = KNN.weightedVote(maxmapFloat, values, length)
+			} else {
+				maxClass = KNN.vote(maxmapInt, values)
+			}
+			base.SetClass(ret, predRowNo, maxClass)
+		}
+
+		return true, nil
+
+	})
+
+	return ret, probas, detail, nil
 }
 
 // Predict returns a classification for the vector, based on a vector input, using the KNN algorithm.
