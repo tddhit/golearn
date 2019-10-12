@@ -98,7 +98,12 @@ func (KNN *KNNClassifier) canUseOptimisations(what base.FixedDataGrid) bool {
 	return true
 }
 
-func (KNN *KNNClassifier) PredictProba(what base.FixedDataGrid) (base.FixedDataGrid, [][]float64, []map[string]int, error) {
+type PredictItem struct {
+	Score float64
+	Class string
+}
+
+func (KNN *KNNClassifier) PredictProba(what base.FixedDataGrid) (base.FixedDataGrid, [][]PredictItem, []map[string]int, error) {
 	// Check what distance function we are using
 	var distanceFunc pairwise.PairwiseDistanceFunc
 	switch KNN.DistanceFunc {
@@ -168,10 +173,10 @@ func (KNN *KNNClassifier) PredictProba(what base.FixedDataGrid) (base.FixedDataG
 	_, maxRow := what.Size()
 	curRow := 0
 
-	probas := make([][]float64, maxRow)
+	probas := make([][]PredictItem, maxRow)
 	detail := make([]map[string]int, maxRow)
 	for i := range probas {
-		probas[i] = make([]float64, KNN.NearestNeighbours)
+		probas[i] = make([]PredictItem, KNN.NearestNeighbours)
 		detail[i] = make(map[string]int)
 	}
 
@@ -230,17 +235,19 @@ func (KNN *KNNClassifier) PredictProba(what base.FixedDataGrid) (base.FixedDataG
 			sorted := utilities.SortIntMap(distances)
 			values := sorted[:KNN.NearestNeighbours]
 
-			length := make([]float64, KNN.NearestNeighbours)
+			length := make([]PredictItem, KNN.NearestNeighbours)
 			for k, v := range values {
-				length[k] = distances[v]
+				length[k] = PredictItem{
+					Score: distances[v],
+					Class: base.GetClass(KNN.TrainingData, v),
+				}
 			}
-
 			var maxClass string
-			if KNN.Weighted {
-				maxClass = KNN.weightedVote(maxmapFloat, values, length)
-			} else {
-				maxClass = KNN.vote(maxmapInt, values)
-			}
+			//if KNN.Weighted {
+			//	maxClass = KNN.weightedVote(maxmapFloat, values, length)
+			//} else {
+			//}
+			maxClass = KNN.vote(maxmapInt, values)
 			copy(probas[predRowNo], length)
 			for k, v := range maxmapInt {
 				detail[predRowNo][k] = v
